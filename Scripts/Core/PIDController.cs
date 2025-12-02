@@ -68,11 +68,7 @@ namespace DroneSimulator.Core
             float integral = Ki * IntegralAccumulator;
 
             // Derivative term
-            float derivative = 0;
-            if (delta > 0)
-            {
-                derivative = Kd * (error - _previousError) / delta;
-            }
+            float derivative = Kd * (error - _previousError) / delta;
 
             _previousError = error;
 
