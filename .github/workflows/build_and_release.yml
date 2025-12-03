@@ -1,0 +1,117 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  GODOT_VERSION: "4.2.1"
+  EXPORT_NAME: DroneSimulator
+
+jobs:
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore Scripts/Tests/DroneSimulator.Tests.csproj
+
+      - name: Run NUnit tests
+        run: dotnet test Scripts/Tests/DroneSimulator.Tests.csproj --no-restore --verbosity normal
+
+  build:
+    name: Build and Export for Windows
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+    container:
+      image: barichello/godot-ci:4.2.1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Setup Godot export templates
+        run: |
+          mkdir -v -p ~/.local/share/godot/export_templates/
+          mv /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+
+      - name: Create export directory
+        run: mkdir -v -p build/windows
+
+      - name: Build C# solution
+        run: |
+          if [ -f "*.sln" ] || [ -f "*.csproj" ]; then
+            dotnet restore
+            dotnet build --configuration Release
+          fi
+        continue-on-error: true
+
+      - name: Export for Windows
+        run: godot --headless --verbose --export-release "Windows Desktop" build/windows/${EXPORT_NAME}.exe
+
+      - name: Create ZIP archive
+        run: |
+          cd build/windows
+          zip -r ../../${EXPORT_NAME}-windows.zip .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: ${{ env.EXPORT_NAME }}-windows.zip
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-build
+
+      - name: Get tag name
+        id: tag
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Release ${{ steps.tag.outputs.tag }}
+          body: |
+            ## Drone Simulator ${{ steps.tag.outputs.tag }}
+            
+            ### Changes
+            - Automated release from tag ${{ steps.tag.outputs.tag }}
+            
+            ### Downloads
+            - **Windows**: Download the ZIP file below and extract to run the simulator.
+          draft: false
+          prerelease: false
+          files: |
+            ${{ env.EXPORT_NAME }}-windows.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
